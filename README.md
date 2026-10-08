@@ -11,15 +11,13 @@ Cross-platform inter-process communication: TCP loopback, named pipes, Unix sock
 
 ## 🌟 Features
 
-- ⚡ **Lightweight & High Performance**: Minimal memory overhead, zero runtime bloat, and fast native execution
-- 🧩 **Modular Architecture**: Layered multi-module design featuring a clean public facade (`src/lib.alya`), rich data models (`src/types.alya`), and encapsulated core formatters (`src/core/formatter.alya`)
-- 🔒 **Public/Private Visibility (`pub`)**: Fine-grained export control with `pub` for public functions, structs, and enums, keeping internal helper functions private and encapsulated
-- 🎭 **Structural Duck Typing & Interfaces**: Dynamic interface dispatch (`Summarizable`, `Describable`) without brittle inheritance hierarchies
-- 📦 **Rich Domain Models & Enums**: Idiomatic `enum` types (`İpcStatus`, `İpcPriority`, `İpcStyle`) and typed data containers (`İpcConfig`, `İpcResult`, `İpcStats`)
-- 🎯 **Advanced Pattern Matching**: Clean branching with `when` expressions, range matching, and condition guards
-- 🛡️ **Defensive Result Pattern**: Structured error handling and outcome encapsulation with `ok_result` and `error_result`
-- 🧪 **Enterprise Test & Benchmark Suite**: 100% test coverage with standard assertions (`std/test`) and micro-benchmarking (`std/test` bench runner)
-- 🚩 **Feature-Gated API Slices**: Optional capability slices via `[features]` in `alya.toml` (`default = ["extras"]`) and `@cfg(feature = "extras")` gating with a `@cfg(not(feature = "extras"))` fallback stub (see `src/core/extras.alya`)
+- ⚡ **TCP Loopback Channel**: Framing-aware client/server over `std/net` with one frame per direction and one-shot request/reply helpers
+- 🧩 **Length-Prefixed Framing**: `<len>:<payload>` text frames and `<kind>:<id>:<len>:<payload>` message frames; payloads may contain colons and newlines
+- 🔒 **Public/Private Visibility (`pub`)**: Fine-grained export control with `pub` for endpoints, messages, framing, and channel functions
+- 🎯 **Endpoint & Message Models**: Idiomatic `enum` types (`IpcTransport`, `IpcKind`) and typed containers (`IpcEndpoint`, `IpcMessage`, `IpcError`, `IpcStats`)
+- 🛡️ **Defensive Result Pattern**: Structured `IpcError` throws for invalid ports, failed connections, and malformed frames
+- 🧪 **Enterprise Test & Benchmark Suite**: Loopback roundtrip coverage with standard assertions (`std/test`) plus framing micro-benchmarks
+- 🔌 **Reserved Transports**: `Pipe` and `UnixSocket` endpoint variants named early so config code can adopt them when backends land
 
 ---
 
@@ -31,25 +29,23 @@ ipc/
 ├── .editorconfig           # Uniform formatting rules across IDEs and editors
 ├── .gitignore              # Ecosystem standard ignore filters
 ├── .vscode/                # VS Code workspace settings, DAP launch configurations & tasks
-├── alya.toml               # Package manifest with dependencies, [features] and optional [build]
-├── c/                      # (Optional) Native C sources for zero-dependency FFI packages
+├── alya.toml               # Package manifest with dependencies and optional [build]
 ├── src/
-│   ├── lib.alya            # Public API facade (pub exports, re-exports & pipeline runners)
+│   ├── lib.alya            # Public API facade (constructors and re-exports)
 │   ├── types.alya          # Data models, pub enums, pub structs, and struct methods
-│   ├── ffi.alya            # (Optional) Native extern "C" declarations
 │   └── core/               # Subdirectory module hierarchy
-│       ├── formatter.alya  # Domain formatting routines, salutation builders & pattern matchers
-│       └── extras.alya     # Feature-gated (`extras`) optional API slice with `@cfg` gating
+│       ├── frame.alya      # Length-prefixed frame and message codec
+│       └── channel.alya    # TCP loopback listen/accept/connect/send/recv
 ├── examples/
-│   └── demo.alya           # Comprehensive runnable walkthrough of all package capabilities
+│   └── demo.alya           # Runnable walkthrough of framing and loopback echo
 ├── tests/
-│   └── test_basic.alya     # Automated test suite with 100% feature coverage
+│   └── test_basic.alya     # Automated test suite with framing and loopback coverage
 └── benches/
-    └── bench_basic.alya    # Micro-benchmarks measuring performance and throughput
+    └── bench_basic.alya    # Micro-benchmarks for the frame and message codec
 ```
 
 > [!NOTE]
-> **Visibility & Modularity:** Symbols annotated with `pub` (`pub function`, `pub struct`, `pub enum`, `pub interface`) are exported to external consumers and re-exporting modules. Symbols without `pub` remain strictly internal to their declaring module, preventing symbol collisions and implementation leakage.
+> **Visibility & Modularity:** Symbols annotated with `pub` (`pub function`, `pub struct`, `pub enum`) are exported to external consumers and re-exporting modules. Symbols without `pub` remain strictly internal to their declaring module, preventing symbol collisions and implementation leakage.
 
 ---
 
@@ -77,18 +73,23 @@ alya install
 import "ipc" as pkg
 
 function main()
-    # 1. Basic facade call with default parameter
-    let greeting = pkg::hello()
-    say f"Greeting:  {greeting}"
+    # 1. Pure framing (no network needed)
+    let wire = pkg::frame_encode("hello-ipc")
+    say f"Wire: {wire}"
 
-    # 2. Struct configuration with priority, style, and methods
-    let cfg = pkg::new_config("Community", 5, pkg::İpcPriority.High, pkg::İpcStyle.Formal)
-    say f"Summary:   {cfg.summary()}"
-    say f"Formatted: {pkg::core_format_custom(cfg)}"
+    # 2. Loopback request/reply on one thread
+    let server = pkg::ipc_listen(19881, 10)
+    let client = pkg::ipc_connect("127.0.0.1", 19881)
+    let peer = pkg::ipc_accept(server, 2000)
 
-    # 3. Processing pipeline returning Result model
-    let res = pkg::process("Analytics", 3, pkg::İpcPriority.Critical)
-    say f"Outcome:   {res.message}"
+    pkg::ipc_send(client, "ping")
+    let got = pkg::ipc_recv(peer)
+    pkg::ipc_send(peer, "pong:" + got)
+    say f"Reply: {pkg::ipc_recv(client)}"
+
+    pkg::ipc_close(client)
+    pkg::ipc_close(peer)
+    pkg::ipc_close(server)
 end
 
 main()
@@ -100,45 +101,48 @@ main()
 
 | Symbol | Visibility | Description |
 |---|---|---|
-| `hello(name = "World")` | `pub function` | Returns a formatted greeting string. Defaults to `"World"` if null or empty. |
-| `new_config(name, count, priority, style)` | `pub function` | Factory constructing a `İpcConfig` with sensible defaults. |
-| `make_config(name, count, priority, style, enabled, tags)` | `pub function` | Full constructor for `İpcConfig`. |
-| `process(label, count, priority)` | `pub function` | Runs processing pipeline, returning an `ok_result` `İpcResult`. |
-| `process_batch(labels)` | `pub function` | Formats an array of labels in batch, returning an array of strings. |
-| `ok_result(value, message)` | `pub function` | Constructs a successful `İpcResult` container (`status = 0`). |
-| `error_result(message, errors)` | `pub function` | Constructs a failed `İpcResult` container (`status = 1`). |
-| `make_stats(total, passed, failed, skipped)` | `pub function` | Constructs a `İpcStats` metrics record. |
-| `format_summary(cfg)` | `pub function` | Formats summary of a config instance (satisfies `Summarizable`). |
-| `format_description(cfg)` | `pub function` | Formats description of a config instance (satisfies `Describable`). |
-| `format_config(config)` | `pub function` | Multi-field formatter producing descriptive overview of a `İpcConfig`. |
-| `format_result(result)` | `pub function` | Formats a `İpcResult` into `[OK]` or `[ERROR]` status line. |
-| `format_stats(stats)` | `pub function` | Formats total checked items and success rate percentage. |
-| `clamp(n, min_val, max_val)` | `pub function` | Clamps an integer value to the closed range `[min_val, max_val]`. |
-| `pluralize(n, singular, plural)` | `pub function` | Pattern-matches count to return singular or plural noun form. |
-| `repeat_string(label, count)` | `pub function` | Repeats a string into an array of `count` items. |
-| `extra_greeting(name = "World")` | `pub function` (`extras` feature, default-on) | Enthusiastic greeting slice gated by `@cfg(feature = "extras")`; stub throws a descriptive error when the feature is off. |
-| `Summarizable` | `pub interface` | Structural contract requiring `summary(self) -> string`. |
-| `Describable` | `pub interface` | Structural contract requiring `describe(self) -> string` and `is_valid(self) -> int`. |
-| `İpcStatus` | `pub enum` | Lifecycle status codes (`Pending = 0`, `Active = 1`, `Archived = 2`, `Error = 3`). |
-| `İpcPriority` | `pub enum` | Priority tiers (`Low = 0`, `Normal = 1`, `High = 2`, `Critical = 3`). |
-| `İpcStyle` | `pub enum` | Presentation styles (`Standard = 0`, `Formal = 1`, `Casual = 2`). |
-| `İpcConfig` | `pub struct` | Primary configuration model (`name`, `count`, `priority`, `style`, `enabled`, `tags`). |
-| `İpcConfig.summary()` | `pub method` | Single-line formatted summary (satisfies `Summarizable`). |
-| `İpcConfig.describe()` | `pub method` | Detailed multi-field description (satisfies `Describable`). |
-| `İpcConfig.is_valid()` | `pub method` | Validation guard returning 1 if valid, 0 otherwise. |
-| `İpcConfig.is_enabled()` | `pub method` | Returns 1 if active, 0 if disabled. |
-| `İpcConfig.with_name(new_name)` | `pub method` | Immutable copy with updated name. |
-| `İpcConfig.with_priority(new_prio)` | `pub method` | Immutable copy with updated priority tier. |
-| `İpcResult` | `pub struct` | Operation outcome model (`value`, `status`, `message`, `errors`). |
-| `İpcResult.is_ok()` | `pub method` | Returns 1 if successful (`status == 0`), 0 otherwise. |
-| `İpcResult.is_error()` | `pub method` | Returns 1 if error (`status != 0`), 0 otherwise. |
-| `İpcResult.unwrap_or(fallback)` | `pub method` | Returns message on success, or fallback on error. |
-| `İpcStats` | `pub struct` | Run statistics model (`total`, `passed`, `failed`, `skipped`). |
-| `İpcStats.total_checked()` | `pub method` | Sum of passed and failed items count. |
-| `İpcStats.success_rate()` | `pub method` | Computed percentage string (e.g. `"95%"`). |
+| `loopback(port)` | `pub function` | Creates a TCP loopback `IpcEndpoint` for the given port. |
+| `text_message(payload)` | `pub function` | Creates a plain `Text` message (null payload becomes ""). |
+| `new_request(id, payload)` | `pub function` | Creates a `Request` message with the given correlation id. |
+| `new_response(id, payload)` | `pub function` | Creates a `Response` message answering the given correlation id. |
+| `new_stats()` | `pub function` | Creates a zeroed `IpcStats` record. |
+| `endpoint_loopback(port)` | `pub function` | Core constructor for loopback endpoints. |
+| `endpoint_pipe(path)` | `pub function` | Placeholder constructor for the future pipe transport. |
+| `endpoint_is_valid(ep)` | `pub function` | True for usable loopback endpoints (port 1-65535). |
+| `message_text(payload)` | `pub function` | Core constructor for text messages. |
+| `message_request(id, payload)` | `pub function` | Core constructor for request messages. |
+| `message_response(id, payload)` | `pub function` | Core constructor for response messages. |
+| `message_is_valid(msg)` | `pub function` | True for known kinds with a string payload. |
+| `stats_new()` | `pub function` | Core constructor for statistics records. |
+| `frame_encode(payload)` | `pub function` | Encodes `"len:payload"` wire frame. |
+| `frame_decode(buf)` | `pub function` | Decodes first frame; returns `(payload, rest)`, null payload while incomplete. |
+| `frame_encode_message(msg)` | `pub function` | Encodes `"kind:id:len:payload"` message frame. |
+| `frame_decode_message(buf)` | `pub function` | Decodes first message frame; returns `(message, rest)`. |
+| `ipc_listen(port, backlog)` | `pub function` | Opens a TCP loopback listener; -1 when the port is busy. |
+| `ipc_accept(server_sock, timeout_ms)` | `pub function` | Accepts next connection; -1 on timeout. |
+| `ipc_connect(host, port, timeout_ms)` | `pub function` | Connects to a peer; throws `IpcError` on failure. |
+| `ipc_close(sock)` | `pub function` | Closes a socket handle (ignores invalid handles). |
+| `ipc_send(sock, payload)` | `pub function` | Sends one framed payload; throws `IpcError` on failure. |
+| `ipc_recv(sock, max_bytes)` | `pub function` | Receives one framed payload; "" on close with no frame. |
+| `ipc_request(ep, payload, timeout_ms)` | `pub function` | One-shot request over a fresh connection; returns reply payload. |
+| `ipc_serve_once(server_sock, handler, timeout_ms)` | `pub function` | Serves one connection via handler; 1 served, 0 on timeout. |
+| `IpcTransport` | `pub enum` | Transport variants (`Loopback = 0`, `Pipe = 1`, `UnixSocket = 2`). |
+| `IpcKind` | `pub enum` | Message kinds (`Text = 0`, `Request = 1`, `Response = 2`). |
+| `IpcEndpoint` | `pub struct` | Peer location (`transport`, `host`, `port`, `path`). |
+| `IpcEndpoint.summary()` | `pub method` | `"host:port"` summary (pipe path for pipe endpoints). |
+| `IpcEndpoint.is_valid()` | `pub method` | True for usable loopback endpoints. |
+| `IpcMessage` | `pub struct` | Framed message (`kind`, `id`, `payload`). |
+| `IpcMessage.summary()` | `pub method` | `"kind#id (n chars)"` summary. |
+| `IpcMessage.is_valid()` | `pub method` | True for known kinds with payload. |
+| `IpcError` | `pub struct` | Thrown failure (`message`, `code`). |
+| `IpcStats` | `pub struct` | Counters (`sent`, `received`, `errors`). |
+| `IpcStats.total()` | `pub method` | Sum of sent and received counters. |
+| `IpcStats.record_sent()` | `pub method` | Increments the sent counter. |
+| `IpcStats.record_received()` | `pub method` | Increments the received counter. |
+| `IpcStats.record_error()` | `pub method` | Increments the error counter. |
 
 > [!TIP]
-> **Internal Helpers & Documentation:** Public symbols are documented with `##` Markdown docstrings, enabling automatic API documentation generation via `alya doc`. Private functions such as `build_salutation` and `build_priority_label` in `src/core/formatter.alya` are not annotated with `pub` and remain encapsulated within their respective modules.
+> **Internal Helpers & Documentation:** Public symbols are documented with `##` Markdown docstrings, enabling automatic API documentation generation via `alya doc`. v0.1 supports one frame per connection direction; persistent multi-message streams are planned.
 
 ---
 
@@ -148,13 +152,6 @@ Run the automated test suite using `alya test`:
 
 ```bash
 alya test
-```
-
-Exercise feature selection (the `extras` slice is default-on):
-
-```bash
-alya test --features extras
-alya test --no-default-features
 ```
 
 Generate static API documentation:

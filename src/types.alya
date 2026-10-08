@@ -1,434 +1,301 @@
 ## ipc Types & Data Structures
 ##
 ## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
-## Defines configuration models, enumerations, structural interfaces, and associated methods
-## showcasing the full range of modern Alya type system capabilities.
-
-# ───────────────────────────────────────────────────────────────
-# Structural Interfaces (Duck Typing)
-# ───────────────────────────────────────────────────────────────
-
-## Public interface for objects capable of producing a formatted string summary.
-##
-## Any struct implementing a `summary(self) -> string` method implicitly
-## satisfies this interface via Alya's structural duck-typing runtime.
-pub interface Summarizable
-    function summary(self) -> string
-end
-
-## Public interface for objects that provide detailed status descriptions and validation.
-##
-## Structs implementing `describe(self) -> string` and `is_valid(self) -> int`
-## satisfy this contract without explicit inheritance declarations.
-pub interface Describable
-    function describe(self) -> string
-    function is_valid(self) -> int
-end
+## Defines endpoint, message, error, and statistics models for
+## cross-process communication over TCP loopback (pipes and Unix
+## sockets are reserved transports for future releases).
 
 # ───────────────────────────────────────────────────────────────
 # Enumerations
 # ───────────────────────────────────────────────────────────────
 
-## Public enumeration of entity lifecycle status states.
+## Transport mechanism used by an endpoint.
 ##
-## Defines sequential status codes from pending to completed or error states.
-pub enum İpcStatus
-    Pending = 0,
-    Active = 1,
-    Archived = 2,
-    Error = 3
+## Only `Loopback` is wired in v0.1. `Pipe` and `UnixSocket` are
+## reserved variants so configuration code can name them early.
+pub enum IpcTransport
+    Loopback = 0,
+    Pipe = 1,
+    UnixSocket = 2
 end
 
-## Public enumeration of operational priority levels.
-##
-## Used to determine dispatch scheduling, queue ordering, and urgency tiers.
-pub enum İpcPriority
-    Low = 0,
-    Normal = 1,
-    High = 2,
-    Critical = 3
-end
-
-## Public enumeration of greeting and presentation styles.
-##
-## Governs formatting salutations, prefixes, and stylistic tone.
-pub enum İpcStyle
-    Standard = 0,
-    Formal = 1,
-    Casual = 2
+## Logical kind of a message payload.
+pub enum IpcKind
+    Text = 0,
+    Request = 1,
+    Response = 2
 end
 
 # ───────────────────────────────────────────────────────────────
 # Data Models (Structs)
 # ───────────────────────────────────────────────────────────────
 
-## Configuration data model holding execution parameters and metadata.
-##
-## Encapsulates target identity, counter thresholds, priority tier, stylistic
-## mode, active status flag, and associated classification tags.
+## Network location of a peer.
 ##
 ## ### Fields
-## - `name`: Validated entity identifier string.
-## - `count`: Repetition limit or processing counter.
-## - `priority`: Operational priority level (`İpcPriority` enum value).
-## - `style`: Presentation style variant (`İpcStyle` enum value).
-## - `enabled`: Activation flag (1 for active, 0 for inactive).
-## - `tags`: Categorical metadata tags array.
-pub struct İpcConfig
-    name: string,
-    count: int,
-    priority: int,
-    style: int,
-    enabled: int,
-    tags: array
+## - `transport`: Active `IpcTransport` value.
+## - `host`: Host name or IP address (loopback only in v0.1).
+## - `port`: TCP port number (1-65535).
+## - `path`: Pipe or socket path (reserved, currently unused).
+pub struct IpcEndpoint
+    transport: int,
+    host: string,
+    port: int,
+    path: string
 end
 
-## Container representing the outcome of an operation.
-##
-## Holds an optional payload value, numeric status code, informational message,
-## and accumulated error diagnostic messages.
+## Single framed message exchanged between processes.
 ##
 ## ### Fields
-## - `value`: Result payload (any type, or null on failure).
-## - `status`: Outcome code (0 for success, non-zero for errors).
-## - `message`: Human-readable summary or error explanation.
-## - `errors`: Diagnostic error messages array.
-pub struct İpcResult
-    value,
-    status: int,
+## - `kind`: Logical `IpcKind` value.
+## - `id`: Correlation id matching requests to responses.
+## - `payload`: Text payload (UTF-8 without NUL bytes in v0.1).
+pub struct IpcMessage
+    kind: int,
+    id: int,
+    payload: string
+end
+
+## Error thrown for invalid endpoints, failed connections, and I/O faults.
+##
+## ### Fields
+## - `message`: Human-readable failure description.
+## - `code`: Numeric failure category.
+pub struct IpcError
     message: string,
-    errors: array
+    code: int
 end
 
-## Aggregated run statistics tracking test, processing, or batch metrics.
-##
-## Records total observed items, successes, failures, and skipped items.
+## Counters tracking sent, received, and failed operations.
 ##
 ## ### Fields
-## - `total`: Total processed items count.
-## - `passed`: Succeeded items count.
-## - `failed`: Failed items count.
-## - `skipped`: Skipped items count.
-pub struct İpcStats
-    total: int,
-    passed: int,
-    failed: int,
-    skipped: int
+## - `sent`: Messages successfully sent.
+## - `received`: Messages successfully received.
+## - `errors`: Failed operations observed.
+pub struct IpcStats
+    sent: int,
+    received: int,
+    errors: int
 end
 
 # ───────────────────────────────────────────────────────────────
-# Private Helper Functions
+# Endpoint Constructors
 # ───────────────────────────────────────────────────────────────
 
-# Internal sanitizer ensuring a non-empty, non-null string fallback.
-function sanitize_text_internal(text, fallback: string) -> string
-    return when
-        text is null => fallback
-        text == ""   => fallback
-        else         => text
+## Creates a TCP loopback endpoint for the given port.
+##
+## ### Parameters
+## - `port`: TCP port number (1-65535).
+##
+## ### Returns
+## Initialized `IpcEndpoint` with transport `Loopback`.
+pub function endpoint_loopback(port: int) -> IpcEndpoint
+    return IpcEndpoint { transport: IpcTransport.Loopback, host: "127.0.0.1", port: port, path: "" }
+end
+
+## Creates a named-pipe endpoint placeholder for a future transport.
+##
+## ### Parameters
+## - `path`: Pipe name or path.
+##
+## ### Returns
+## Initialized `IpcEndpoint` with transport `Pipe`.
+pub function endpoint_pipe(path: string) -> IpcEndpoint
+    let p = path
+    if p is null
+        p = ""
     end
+    return IpcEndpoint { transport: IpcTransport.Pipe, host: "", port: 0, path: p }
 end
 
-# Formats integer division as a percentage string, clamping denominator zero.
-function format_percent_internal(passed: int, total: int) -> string
-    if total <= 0
-        return "0%"
+## Returns true when the endpoint carries a usable loopback address.
+##
+## ### Parameters
+## - `ep`: Endpoint to validate.
+##
+## ### Returns
+## True for loopback endpoints with a port in 1-65535, else false.
+pub function endpoint_is_valid(ep) -> bool
+    if ep is null
+        return false
     end
-    let pct = (passed * 100) / total
-    return "{pct}%"
-end
-
-# ───────────────────────────────────────────────────────────────
-# Public Sanitization and Factory Constructors
-# ───────────────────────────────────────────────────────────────
-
-## Validates and sanitizes a candidate name string.
-##
-## Replaces null or empty strings with the default `"World"` fallback.
-##
-## ### Parameters
-## - `name`: The candidate name value to sanitize.
-##
-## ### Returns
-## The validated string value, or `"World"` if empty or null.
-##
-## ### Examples
-## ```alya
-## let clean = sanitize_name(null) # "World"
-## let user = sanitize_name("Alice") # "Alice"
-## ```
-pub function sanitize_name(name) -> string
-    return sanitize_text_internal(name, "World")
-end
-
-## Factory constructor creating a validated `İpcConfig` instance.
-##
-## Sanitizes the input name and sets sensible defaults for optional fields.
-##
-## ### Parameters
-## - `name`: Entity identifier name. Defaults to `"World"`.
-## - `count`: Counter or repetition limit. Defaults to `1`.
-## - `priority`: Priority tier. Defaults to `İpcPriority.Normal`.
-## - `style`: Presentation style variant. Defaults to `İpcStyle.Standard`.
-## - `enabled`: Active flag. Defaults to `1`.
-## - `tags`: Categorization tags array. Defaults to `[]`.
-##
-## ### Returns
-## A fully initialized `İpcConfig` instance.
-##
-## ### Examples
-## ```alya
-## let cfg = make_config("Alice", 3, İpcPriority.High)
-## ```
-pub function make_config(name = "World", count: int = 1, priority: int = İpcPriority.Normal, style: int = İpcStyle.Standard, enabled: int = 1, tags: array = []) -> İpcConfig
-    let valid_name = sanitize_name(name)
-    return İpcConfig {
-        name: valid_name,
-        count: count,
-        priority: priority,
-        style: style,
-        enabled: enabled,
-        tags: tags
-    }
-end
-
-## Factory constructor creating a successful `İpcResult`.
-##
-## ### Parameters
-## - `value`: The success payload to encapsulate.
-## - `message`: Descriptive success message string. Defaults to `"OK"`.
-##
-## ### Returns
-## A `İpcResult` with status `0` and empty errors array.
-##
-## ### Examples
-## ```alya
-## let res = ok_result("Processed data", "Success")
-## ```
-pub function ok_result(value, message: string = "OK") -> İpcResult
-    return İpcResult {
-        value: value,
-        status: 0,
-        message: message,
-        errors: []
-    }
-end
-
-## Factory constructor creating a failed `İpcResult`.
-##
-## ### Parameters
-## - `message`: Descriptive error message string.
-## - `errors`: Diagnostic error details array. Defaults to `[]`.
-##
-## ### Returns
-## A `İpcResult` with status `1` and null value payload.
-##
-## ### Examples
-## ```alya
-## let err = error_result("Validation failed", ["Name is missing"])
-## ```
-pub function error_result(message: string, errors: array = []) -> İpcResult
-    return İpcResult {
-        value: null,
-        status: 1,
-        message: message,
-        errors: errors
-    }
-end
-
-## Factory constructor creating a `İpcStats` metric record.
-##
-## ### Parameters
-## - `total`: Total observed items count.
-## - `passed`: Succeeded items count.
-## - `failed`: Failed items count.
-## - `skipped`: Skipped items count. Defaults to `0`.
-##
-## ### Returns
-## A populated `İpcStats` record.
-##
-## ### Examples
-## ```alya
-## let stats = make_stats(100, 95, 5, 0)
-## ```
-pub function make_stats(total: int, passed: int, failed: int, skipped: int = 0) -> İpcStats
-    return İpcStats {
-        total: total,
-        passed: passed,
-        failed: failed,
-        skipped: skipped
-    }
-end
-
-# ───────────────────────────────────────────────────────────────
-# Struct Methods: İpcConfig
-# ───────────────────────────────────────────────────────────────
-
-## Returns a formatted single-line string summary of this configuration.
-##
-## Implicitly satisfies the `Summarizable` interface.
-##
-## ### Parameters
-## - `self`: The target `İpcConfig` instance.
-##
-## ### Returns
-## Formatted summary string in the form `"{name} (count: {count}, enabled: {enabled})"`.
-pub function İpcConfig.summary(self: İpcConfig) -> string
-    let active_str = when self.enabled
-        is true => "active"
-        else => "disabled"
+    if ep.transport != IpcTransport.Loopback
+        return false
     end
-    return "{self.name} (count: {self.count}, {active_str})"
-end
-
-## Returns a detailed multi-attribute description of this configuration.
-##
-## Implicitly satisfies the `Describable` interface.
-##
-## ### Parameters
-## - `self`: The target `İpcConfig` instance.
-##
-## ### Returns
-## Detailed descriptive string including priority and style codes.
-pub function İpcConfig.describe(self: İpcConfig) -> string
-    return "[Config] name={self.name}, count={self.count}, priority={self.priority}, style={self.style}"
-end
-
-## Validates whether this configuration conforms to essential operational constraints.
-##
-## Implicitly satisfies the `Describable` interface.
-##
-## ### Parameters
-## - `self`: The target `İpcConfig` instance.
-##
-## ### Returns
-## `1` if valid (non-empty name and count >= 0), `0` otherwise.
-pub function İpcConfig.is_valid(self: İpcConfig) -> int
-    if self.name == "" or self.count < 0
+    if ep.host is null or ep.host == ""
+        return false
+    end
+    if ep.port <= 0 or ep.port > 65535
         return false
     end
     return true
 end
 
-## Returns 1 if this configuration is enabled, 0 otherwise.
-##
-## ### Parameters
-## - `self`: The target `İpcConfig` instance.
-##
-## ### Returns
-## `1` when enabled, `0` when disabled.
-pub function İpcConfig.is_enabled(self: İpcConfig) -> int
-    return self.enabled
-end
-
-## Returns a new configuration copy with an updated name.
-##
-## ### Parameters
-## - `self`: The current `İpcConfig` instance.
-## - `new_name`: The replacement name string.
-##
-## ### Returns
-## A new `İpcConfig` instance with updated name.
-pub function İpcConfig.with_name(self: İpcConfig, new_name) -> İpcConfig
-    return İpcConfig {
-        name: sanitize_name(new_name),
-        count: self.count,
-        priority: self.priority,
-        style: self.style,
-        enabled: self.enabled,
-        tags: self.tags
-    }
-end
-
-## Returns a new configuration copy with an updated priority level.
-##
-## ### Parameters
-## - `self`: The current `İpcConfig` instance.
-## - `new_priority`: New priority level from `İpcPriority`.
-##
-## ### Returns
-## A new `İpcConfig` instance with updated priority.
-pub function İpcConfig.with_priority(self: İpcConfig, new_priority: int) -> İpcConfig
-    return İpcConfig {
-        name: self.name,
-        count: self.count,
-        priority: new_priority,
-        style: self.style,
-        enabled: self.enabled,
-        tags: self.tags
-    }
-end
-
 # ───────────────────────────────────────────────────────────────
-# Struct Methods: İpcResult
+# Message Constructors
 # ───────────────────────────────────────────────────────────────
 
-## Returns 1 if this result represents a successful operation.
+## Creates a plain text message with kind `Text` and id `0`.
 ##
 ## ### Parameters
-## - `self`: The target `İpcResult` instance.
+## - `payload`: Text payload (null becomes "").
 ##
 ## ### Returns
-## `1` when status is `0`, `0` otherwise.
-pub function İpcResult.is_ok(self: İpcResult) -> int
-    if self.status == 0
-        return true
+## Initialized `IpcMessage`.
+pub function message_text(payload) -> IpcMessage
+    let body = payload
+    if body is null
+        body = ""
     end
-    return false
+    return IpcMessage { kind: IpcKind.Text, id: 0, payload: body }
 end
 
-## Returns 1 if this result represents an error condition.
+## Creates a request message with the given correlation id.
 ##
 ## ### Parameters
-## - `self`: The target `İpcResult` instance.
+## - `id`: Correlation id echoed back in the response.
+## - `payload`: Text payload (null becomes "").
 ##
 ## ### Returns
-## `1` when status is non-zero, `0` when status is `0`.
-pub function İpcResult.is_error(self: İpcResult) -> int
-    if self.status != 0
-        return true
+## Initialized `IpcMessage` with kind `Request`.
+pub function message_request(id: int, payload) -> IpcMessage
+    let body = payload
+    if body is null
+        body = ""
     end
-    return false
+    return IpcMessage { kind: IpcKind.Request, id: id, payload: body }
 end
 
-## Unwraps the result's message string, or returns a fallback string on error.
+## Creates a response message answering the given correlation id.
 ##
 ## ### Parameters
-## - `self`: The target `İpcResult` instance.
-## - `fallback`: Alternative string returned if this result represents an error.
+## - `id`: Correlation id copied from the request.
+## - `payload`: Text payload (null becomes "").
 ##
 ## ### Returns
-## `message` on success, or `fallback` on error.
-pub function İpcResult.unwrap_or(self: İpcResult, fallback: string) -> string
-    if self.status == 0
-        return self.message
+## Initialized `IpcMessage` with kind `Response`.
+pub function message_response(id: int, payload) -> IpcMessage
+    let body = payload
+    if body is null
+        body = ""
     end
-    return fallback
+    return IpcMessage { kind: IpcKind.Response, id: id, payload: body }
+end
+
+## Returns true when the message holds a known kind and a string payload.
+##
+## ### Parameters
+## - `msg`: Message to validate.
+##
+## ### Returns
+## True when valid, else false.
+pub function message_is_valid(msg) -> bool
+    if msg is null
+        return false
+    end
+    if msg.kind != IpcKind.Text and msg.kind != IpcKind.Request and msg.kind != IpcKind.Response
+        return false
+    end
+    if msg.payload is null
+        return false
+    end
+    return true
 end
 
 # ───────────────────────────────────────────────────────────────
-# Struct Methods: İpcStats
+# Statistics Constructors
 # ───────────────────────────────────────────────────────────────
 
-## Returns the total number of checked items (passed + failed).
-##
-## ### Parameters
-## - `self`: The target `İpcStats` instance.
+## Creates a zeroed statistics record.
 ##
 ## ### Returns
-## Integer sum of passed and failed items.
-pub function İpcStats.total_checked(self: İpcStats) -> int
-    return self.passed + self.failed
+## `IpcStats` with all counters at 0.
+pub function stats_new() -> IpcStats
+    return IpcStats { sent: 0, received: 0, errors: 0 }
 end
 
-## Computes and returns the success rate percentage as a formatted string.
+## Returns the total number of completed operations (sent + received).
 ##
 ## ### Parameters
-## - `self`: The target `İpcStats` instance.
+## - `self`: Statistics record to measure.
 ##
 ## ### Returns
-## Formatted percentage string (e.g. `"90%"`).
-pub function İpcStats.success_rate(self: İpcStats) -> string
-    let checked = self.passed + self.failed
-    return format_percent_internal(self.passed, checked)
+## Sum of sent and received counters.
+pub function IpcStats.total(self: IpcStats) -> int
+    return self.sent + self.received
+end
+
+## Records one sent message.
+##
+## ### Parameters
+## - `self`: Statistics record to update.
+pub function IpcStats.record_sent(self: IpcStats)
+    self.sent += 1
+end
+
+## Records one received message.
+##
+## ### Parameters
+## - `self`: Statistics record to update.
+pub function IpcStats.record_received(self: IpcStats)
+    self.received += 1
+end
+
+## Records one failed operation.
+##
+## ### Parameters
+## - `self`: Statistics record to update.
+pub function IpcStats.record_error(self: IpcStats)
+    self.errors += 1
+end
+
+# ───────────────────────────────────────────────────────────────
+# Struct Methods
+# ───────────────────────────────────────────────────────────────
+
+## Returns a single-line summary of the endpoint.
+##
+## ### Parameters
+## - `self`: The target `IpcEndpoint` instance.
+##
+## ### Returns
+## Formatted `"host:port"` summary, or the pipe path for pipe endpoints.
+pub function IpcEndpoint.summary(self: IpcEndpoint) -> string
+    if self.transport == IpcTransport.Pipe
+        return "pipe:{self.path}"
+    end
+    return "{self.host}:{self.port}"
+end
+
+## Returns true when this endpoint is a usable loopback address.
+##
+## ### Parameters
+## - `self`: The target `IpcEndpoint` instance.
+##
+## ### Returns
+## True when valid, else false.
+pub function IpcEndpoint.is_valid(self: IpcEndpoint) -> bool
+    return endpoint_is_valid(self)
+end
+
+## Returns a single-line summary of the message.
+##
+## ### Parameters
+## - `self`: The target `IpcMessage` instance.
+##
+## ### Returns
+## Formatted `"kind#id (n chars)"` summary.
+pub function IpcMessage.summary(self: IpcMessage) -> string
+    return "{self.kind}#{self.id} ({len(self.payload)} chars)"
+end
+
+## Returns true when this message holds a known kind and payload.
+##
+## ### Parameters
+## - `self`: The target `IpcMessage` instance.
+##
+## ### Returns
+## True when valid, else false.
+pub function IpcMessage.is_valid(self: IpcMessage) -> bool
+    return message_is_valid(self)
 end

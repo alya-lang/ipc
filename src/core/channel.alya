@@ -1,0 +1,230 @@
+## ipc TCP Loopback Channel
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Thin framing-aware wrappers over `std/net` TCP loopback sockets.
+## v0.1 uses one frame per connection direction: clients connect, send a
+## single framed payload, and read a single framed reply.
+
+import "std/net" as net
+import "../types.alya"
+import "./frame.alya"
+
+## Opens a TCP loopback listener on the given port.
+##
+## ### Parameters
+## - `port`: Local port number to listen on (1-65535).
+## - `backlog`: Pending-connection queue length (defaults to 10).
+##
+## ### Returns
+## Listening socket handle, or -1 when the port is busy.
+pub function ipc_listen(port: int, backlog: int = 10) -> int
+    if port <= 0 or port > 65535
+        throw IpcError { message: "ipc: invalid port", code: 2 }
+    end
+    let b = backlog
+    if b <= 0
+        b = 10
+    end
+    return net::tcp_listen(port, b)
+end
+
+## Accepts the next pending connection within the timeout.
+##
+## ### Parameters
+## - `server_sock`: Listening socket from `ipc_listen`.
+## - `timeout_ms`: Maximum wait in milliseconds (defaults to 2000).
+##
+## ### Returns
+## Client socket handle, or -1 on timeout or error.
+pub function ipc_accept(server_sock: int, timeout_ms: int = 2000) -> int
+    if server_sock < 0
+        return -1
+    end
+    let t = timeout_ms
+    if t < 0
+        t = 0
+    end
+    let ready = net::tcp_poll(server_sock, t)
+    if ready != true
+        return -1
+    end
+    let client = net::tcp_accept(server_sock)
+    if client < 0
+        return -1
+    end
+    net::tcp_set_timeout(client, 5000)
+    return client
+end
+
+## Connects to a loopback peer, throwing `IpcError` on failure.
+##
+## ### Parameters
+## - `host`: Remote host (empty or null selects 127.0.0.1).
+## - `port`: Remote port number (1-65535).
+## - `timeout_ms`: Socket timeout in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Connected socket handle.
+pub function ipc_connect(host: string, port: int, timeout_ms: int = 5000) -> int
+    let h = host
+    if h is null or h == ""
+        h = "127.0.0.1"
+    end
+    if port <= 0 or port > 65535
+        throw IpcError { message: "ipc: invalid port", code: 2 }
+    end
+    let sock = -1
+    try
+        sock = net::tcp_connect(h, port)
+    catch e
+        throw IpcError { message: "ipc: connection failed", code: 3 }
+    end
+    if sock < 0
+        throw IpcError { message: "ipc: connection failed", code: 3 }
+    end
+    let t = timeout_ms
+    if t <= 0
+        t = 5000
+    end
+    net::tcp_set_timeout(sock, t)
+    return sock
+end
+
+## Closes a socket handle, ignoring invalid handles.
+##
+## ### Parameters
+## - `sock`: Socket handle to close.
+##
+## ### Returns
+## Always 0.
+pub function ipc_close(sock: int) -> int
+    if sock < 0
+        return 0
+    end
+    net::tcp_close(sock)
+    return 0
+end
+
+## Sends one framed payload over a connected socket.
+##
+## ### Parameters
+## - `sock`: Connected socket handle.
+## - `payload`: Text payload (null becomes "").
+##
+## ### Returns
+## Bytes sent.
+pub function ipc_send(sock: int, payload) -> int
+    if sock < 0
+        throw IpcError { message: "ipc: invalid socket", code: 4 }
+    end
+    let body = payload
+    if body is null
+        body = ""
+    end
+    let wire = frame_encode(body)
+    let n = net::tcp_send(sock, wire)
+    if n < 0
+        throw IpcError { message: "ipc: send failed", code: 5 }
+    end
+    return n
+end
+
+## Receives one framed payload from a connected socket.
+##
+## Reads until the first complete frame arrives. Returns "" when the
+## peer closes the connection without sending a frame.
+##
+## ### Parameters
+## - `sock`: Connected socket handle.
+## - `max_bytes`: Maximum bytes per read (defaults to 4096).
+##
+## ### Returns
+## Decoded payload string, or "" on close with no frame.
+pub function ipc_recv(sock: int, max_bytes: int = 4096) -> string
+    if sock < 0
+        throw IpcError { message: "ipc: invalid socket", code: 4 }
+    end
+    let limit = max_bytes
+    if limit <= 0
+        limit = 4096
+    end
+    let buf = ""
+    let guard = 0
+    while guard < 64
+        let chunk = net::tcp_recv(sock, limit)
+        if chunk is null or len(chunk) == 0
+            break
+        end
+        buf += chunk
+        let payload, rest = frame_decode(buf)
+        if payload is not null
+            return payload
+        end
+        guard += 1
+    end
+    let tail, ignored = frame_decode(buf)
+    if tail is not null
+        return tail
+    end
+    return ""
+end
+
+## Sends a request to an endpoint and waits for a single reply.
+##
+## Opens a fresh connection per call (one frame each direction).
+##
+## ### Parameters
+## - `ep`: Target `IpcEndpoint`.
+## - `payload`: Request text payload.
+## - `timeout_ms`: Socket timeout in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Reply payload string.
+pub function ipc_request(ep, payload, timeout_ms: int = 5000) -> string
+    let host = "127.0.0.1"
+    let port = 0
+    if ep is not null
+        host = ep.host
+        port = ep.port
+    end
+    let sock = ipc_connect(host, port, timeout_ms)
+    let reply = ""
+    try
+        ipc_send(sock, payload)
+        reply = ipc_recv(sock)
+        ipc_close(sock)
+        return reply
+    catch e
+        ipc_close(sock)
+        throw e
+    end
+end
+
+## Accepts one connection, runs the handler, and replies once.
+##
+## ### Parameters
+## - `server_sock`: Listening socket from `ipc_listen`.
+## - `handler`: Function receiving the request payload and returning reply text.
+## - `timeout_ms`: Accept timeout in milliseconds (defaults to 5000).
+##
+## ### Returns
+## 1 when a request was served, 0 when no connection arrived.
+pub function ipc_serve_once(server_sock: int, handler, timeout_ms: int = 5000) -> int
+    let peer = ipc_accept(server_sock, timeout_ms)
+    if peer < 0
+        return 0
+    end
+    try
+        let msg = ipc_recv(peer)
+        let out = handler(msg)
+        if out is null
+            out = ""
+        end
+        ipc_send(peer, out)
+        ipc_close(peer)
+        return 1
+    catch e
+        ipc_close(peer)
+        throw e
+    end
+end

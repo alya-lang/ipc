@@ -1,0 +1,153 @@
+## ipc Wire Framing
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Length-prefixed text framing so a stream of messages can share one
+## connection: each frame is `<byte-length>:<payload>`. Full messages use
+## `<kind>:<id>:<byte-length>:<payload>`. Payloads may contain colons and
+## newlines; only the length prefix is parsed structurally.
+
+import "../types.alya"
+
+## Encodes a text payload into a single wire frame.
+##
+## ### Parameters
+## - `payload`: Text payload (null becomes "").
+##
+## ### Returns
+## Frame string in the form `"len:payload"`.
+##
+## ### Examples
+## ```alya
+## let wire = frame_encode("hello") # "5:hello"
+## ```
+pub function frame_encode(payload) -> string
+    let body = payload
+    if body is null
+        body = ""
+    end
+    return str(len(body)) + ":" + body
+end
+
+## Decodes the first frame found in a buffered byte stream.
+##
+## Returns the payload plus the unconsumed remainder. Incomplete buffers
+## report a null payload so callers keep reading.
+##
+## ### Parameters
+## - `buf`: Buffered stream text (null yields incomplete).
+##
+## ### Returns
+## `(payload, rest)` tuple: payload is null while incomplete.
+pub function frame_decode(buf)
+    let s = buf
+    if s is null
+        return null, buf
+    end
+    let idx = index_of(s, ":")
+    if idx < 0
+        return null, buf
+    end
+    let head = substring(s, 0, idx)
+    if len(head) == 0
+        throw IpcError { message: "ipc: malformed frame (empty length)", code: 1 }
+    end
+    let i = 0
+    while i < len(head)
+        let code = ord(char_at(head, i))
+        if code < 48 or code > 57
+            throw IpcError { message: "ipc: malformed frame length prefix", code: 1 }
+        end
+        i += 1
+    end
+    let n = to_int(head)
+    if n < 0
+        throw IpcError { message: "ipc: malformed frame length", code: 1 }
+    end
+    let start = idx + 1
+    let available = len(s) - start
+    if available < n
+        return null, buf
+    end
+    let payload = substring(s, start, n)
+    let rest = ""
+    if start + n < len(s)
+        rest = substring(s, start + n, len(s) - start - n)
+    end
+    return payload, rest
+end
+
+## Encodes a full message (kind, id, payload) into one wire frame.
+##
+## ### Parameters
+## - `msg`: Message to encode.
+##
+## ### Returns
+## Frame string in the form `"kind:id:len:payload"`.
+##
+## ### Examples
+## ```alya
+## let wire = frame_encode_message(message_request(7, "hi"))
+## ```
+pub function frame_encode_message(msg) -> string
+    let kind = 0
+    let id = 0
+    let body = ""
+    if msg is not null
+        kind = msg.kind
+        id = msg.id
+        body = msg.payload
+        if body is null
+            body = ""
+        end
+    end
+    return str(kind) + ":" + str(id) + ":" + str(len(body)) + ":" + body
+end
+
+## Decodes the first message frame found in a buffered stream.
+##
+## ### Parameters
+## - `buf`: Buffered stream text (null yields incomplete).
+##
+## ### Returns
+## `(message, rest)` tuple: message is null while incomplete.
+pub function frame_decode_message(buf)
+    let s = buf
+    if s is null
+        return null, buf
+    end
+    let i1 = index_of(s, ":")
+    if i1 < 0
+        return null, buf
+    end
+    let kind_text = substring(s, 0, i1)
+    let after1 = substring(s, i1 + 1, len(s) - i1 - 1)
+    let i2 = index_of(after1, ":")
+    if i2 < 0
+        return null, buf
+    end
+    let id_text = substring(after1, 0, i2)
+    let after2 = substring(after1, i2 + 1, len(after1) - i2 - 1)
+    let i3 = index_of(after2, ":")
+    if i3 < 0
+        return null, buf
+    end
+    let len_text = substring(after2, 0, i3)
+    let after3 = substring(after2, i3 + 1, len(after2) - i3 - 1)
+    if len(kind_text) == 0 or len(id_text) == 0 or len(len_text) == 0
+        throw IpcError { message: "ipc: malformed message frame", code: 1 }
+    end
+    let n = to_int(len_text)
+    if n < 0 or len(after3) < n
+        if n >= 0 and len(after3) < n
+            return null, buf
+        end
+        throw IpcError { message: "ipc: malformed message length", code: 1 }
+    end
+    let body = substring(after3, 0, n)
+    let rest = ""
+    if n < len(after3)
+        rest = substring(after3, n, len(after3) - n)
+    end
+    let msg = IpcMessage { kind: to_int(kind_text), id: to_int(id_text), payload: body }
+    return msg, rest
+end

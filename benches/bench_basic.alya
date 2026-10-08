@@ -7,71 +7,46 @@ import "../src/lib.alya" as pkg
 function main()
     let runner = bench_runner("ipc Micro-Benchmarks")
 
-    # Bench 1: hello() facade function — 100k iterations
+    # Bench 1: frame_encode short payload - 100k iterations
     bench_start(runner, 100000)
     let i = 0
     while i < 100000
-        pkg::hello("Alya")
+        pkg::frame_encode("hello-ipc")
         i += 1
     end
-    bench_stop(runner, "hello() 100k calls")
+    bench_stop(runner, "frame_encode short 100k")
 
-    # Bench 2: process() default call — 100k iterations
+    # Bench 2: frame_decode short frame - 100k iterations
     bench_start(runner, 100000)
     let j = 0
     while j < 100000
-        pkg::process()
+        pkg::frame_decode("9:hello-ipc")
         j += 1
     end
-    bench_stop(runner, "process() default 100k calls")
+    bench_stop(runner, "frame_decode short 100k")
 
-    # Bench 3: make_config + format_config — 50k iterations
+    # Bench 3: message codec roundtrip - 50k iterations
+    let req = pkg::new_request(7, "compute:6*7")
     bench_start(runner, 50000)
     let k = 0
     while k < 50000
-        let cfg = pkg::new_config("bench", 1, pkg::İpcPriority.High, pkg::İpcStyle.Formal)
-        pkg::core_format_custom(cfg)
+        let wire = pkg::frame_encode_message(req)
+        pkg::frame_decode_message(wire)
         k += 1
     end
-    bench_stop(runner, "new_config + format_custom 50k calls")
+    bench_stop(runner, "message codec 50k")
 
-    # Bench 4: process_batch with 10-element array — 10k iterations
-    let labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-    bench_start(runner, 10000)
+    # Bench 4: endpoint + message constructors - 100k iterations
+    bench_start(runner, 100000)
     let m = 0
-    while m < 10000
-        pkg::process_batch(labels)
+    while m < 100000
+        let ep = pkg::loopback(19881)
+        let msg = pkg::text_message("ping")
+        ep.is_valid()
+        msg.is_valid()
         m += 1
     end
-    bench_stop(runner, "process_batch 10-item list 10k calls")
-
-    # Bench 5: struct method cfg.summary() — 200k iterations
-    let summ_cfg = pkg::new_config("summary-bench", 5)
-    bench_start(runner, 200000)
-    let s = 0
-    while s < 200000
-        summ_cfg.summary()
-        s += 1
-    end
-    bench_stop(runner, "cfg.summary() 200k calls")
-
-    # Bench 6: clamp() utility — 500k iterations
-    bench_start(runner, 500000)
-    let c = 0
-    while c < 500000
-        pkg::clamp(c, 0, 100)
-        c += 1
-    end
-    bench_stop(runner, "clamp() utility 500k calls")
-
-    # Bench 7: repeat_string() utility — 10k iterations
-    bench_start(runner, 10000)
-    let r = 0
-    while r < 10000
-        pkg::repeat_string("bench", 10)
-        r += 1
-    end
-    bench_stop(runner, "repeat_string() 10k calls")
+    bench_stop(runner, "constructors 100k")
 
     bench_summary(runner)
 end
