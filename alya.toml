@@ -12,12 +12,6 @@ keywords = ["alya", "alya-lang", "package", "ipc"]
 
 [dependencies]
 
-# [build]
-# c-sources = ["c/source.c"]
-# c-flags = ["-O2"]
-# c-include-dirs = ["c"]
-# links = "ipc"
-
 # [lint]
 # disabled_rules = []
 # exclude = []
