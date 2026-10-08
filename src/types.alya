@@ -34,9 +34,9 @@ end
 ##
 ## ### Fields
 ## - `transport`: Active `IpcTransport` value.
-## - `host`: Host name or IP address (loopback only in v0.1).
-## - `port`: TCP port number (1-65535).
-## - `path`: Pipe or socket path (reserved, currently unused).
+## - `host`: Host name or IP address (loopback transport only).
+## - `port`: TCP port number (loopback transport only, 1-65535).
+## - `path`: Channel name for the `Pipe` transport, empty otherwise.
 pub struct IpcEndpoint
     transport: int,
     host: string,
@@ -93,42 +93,55 @@ pub function endpoint_loopback(port: int) -> IpcEndpoint
     return IpcEndpoint { transport: IpcTransport.Loopback, host: "127.0.0.1", port: port, path: "" }
 end
 
-## Creates a named-pipe endpoint placeholder for a future transport.
+## Creates a named-pipe endpoint for the given channel name.
+##
+## The name keeps `[A-Za-z0-9_-]` characters (up to 32); the native engine
+## strips the rest and maps it to a Windows named pipe or a POSIX Unix
+## domain socket.
 ##
 ## ### Parameters
-## - `path`: Pipe name or path.
+## - `name`: Logical channel name (e.g. `"orders"`).
 ##
 ## ### Returns
 ## Initialized `IpcEndpoint` with transport `Pipe`.
-pub function endpoint_pipe(path: string) -> IpcEndpoint
-    let p = path
-    if p is null
-        p = ""
+pub function endpoint_pipe(name: string) -> IpcEndpoint
+    let n = name
+    if n is null
+        n = ""
     end
-    return IpcEndpoint { transport: IpcTransport.Pipe, host: "", port: 0, path: p }
+    return IpcEndpoint { transport: IpcTransport.Pipe, host: "", port: 0, path: n }
 end
 
-## Returns true when the endpoint carries a usable loopback address.
+## Returns true when the endpoint carries a usable address.
+##
+## Loopback endpoints need a host and a port in 1-65535; pipe endpoints
+## need a non-empty channel name.
 ##
 ## ### Parameters
 ## - `ep`: Endpoint to validate.
 ##
 ## ### Returns
-## True for loopback endpoints with a port in 1-65535, else false.
+## True for usable endpoints, else false.
 pub function endpoint_is_valid(ep) -> bool
     if ep is null
         return false
     end
-    if ep.transport != IpcTransport.Loopback
-        return false
+    if ep.transport == IpcTransport.Loopback
+        if ep.host is null or ep.host == ""
+            return false
+        end
+        if ep.port <= 0 or ep.port > 65535
+            return false
+        end
+        return true
     end
-    if ep.host is null or ep.host == ""
-        return false
+    if ep.transport == IpcTransport.Pipe
+        if ep.path is null or ep.path == ""
+            return false
+        end
+        return true
     end
-    if ep.port <= 0 or ep.port > 65535
-        return false
-    end
-    return true
+    return false
 end
 
 # ───────────────────────────────────────────────────────────────
@@ -259,7 +272,7 @@ end
 ## - `self`: The target `IpcEndpoint` instance.
 ##
 ## ### Returns
-## Formatted `"host:port"` summary, or the pipe path for pipe endpoints.
+## Formatted `"host:port"` summary, or `"pipe:name"` for pipe endpoints.
 pub function IpcEndpoint.summary(self: IpcEndpoint) -> string
     if self.transport == IpcTransport.Pipe
         return "pipe:{self.path}"
@@ -267,7 +280,7 @@ pub function IpcEndpoint.summary(self: IpcEndpoint) -> string
     return "{self.host}:{self.port}"
 end
 
-## Returns true when this endpoint is a usable loopback address.
+## Returns true when this endpoint carries a usable address.
 ##
 ## ### Parameters
 ## - `self`: The target `IpcEndpoint` instance.

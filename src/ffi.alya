@@ -1,0 +1,13 @@
+# Native C FFI declarations for ipc pipe transport
+# Part of the Alya Language package ecosystem (https://github.com/alya-lang)
+
+extern "C" from "ipc"
+    function alya_ipc_pipe_listen(name: str) -> i32
+    function alya_ipc_pipe_accept(server_slot: i32, timeout_ms: i32) -> i32
+    function alya_ipc_pipe_connect(name: str, timeout_ms: i32) -> i32
+    function alya_ipc_pipe_send(slot: i32, data: str) -> i32
+    function alya_ipc_pipe_recv(slot: i32, buf: ptr, maxlen: i32, timeout_ms: i32) -> i32
+    function alya_ipc_pipe_poll(slot: i32, timeout_ms: i32) -> i32
+    function alya_ipc_pipe_close(slot: i32) -> i32
+    function alya_ipc_pipe_error() -> str
+end

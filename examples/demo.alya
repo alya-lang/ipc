@@ -70,9 +70,32 @@ function main()
     say ""
 
     # ───────────────────────────────────────────────────────────
-    # 4. Statistics
+    # 4. Named Pipe Request/Reply (single-threaded echo)
     # ───────────────────────────────────────────────────────────
-    say "--- 4. Statistics ---"
+    say "--- 4. Named Pipe Request/Reply ---"
+    let pipe_server = pkg::ipc_pipe_listen("ipc-demo")
+    if pipe_server < 0
+        say "Pipe listener unavailable, skipping pipe demo."
+    else
+        let pipe_client = pkg::ipc_pipe_connect("ipc-demo")
+        let pipe_peer = pkg::ipc_pipe_accept(pipe_server, 2000)
+        if pipe_client >= 0 and pipe_peer >= 0
+            pkg::ipc_pipe_send(pipe_client, "ping")
+            let pipe_got = pkg::ipc_pipe_recv(pipe_peer)
+            say "Pipe server got: " + pipe_got
+            pkg::ipc_pipe_send(pipe_peer, "pong:" + pipe_got)
+            say "Pipe client got: " + pkg::ipc_pipe_recv(pipe_client)
+            pkg::ipc_pipe_close(pipe_client)
+            pkg::ipc_pipe_close(pipe_peer)
+        end
+        pkg::ipc_pipe_close(pipe_server)
+    end
+    say ""
+
+    # ───────────────────────────────────────────────────────────
+    # 5. Statistics
+    # ───────────────────────────────────────────────────────────
+    say "--- 5. Statistics ---"
     let st = pkg::new_stats()
     st.record_sent()
     st.record_received()

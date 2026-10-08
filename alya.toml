@@ -8,9 +8,15 @@ authors = ["Alya Language Contributors <https://github.com/alya-lang>"]
 license = "MIT"
 homepage = "https://github.com/alya-lang/alya"
 repository = "https://github.com/alya-lang/ipc"
-keywords = ["alya", "alya-lang", "package", "ipc"]
+keywords = ["alya", "alya-lang", "package", "ipc", "networking", "c", "ffi"]
 
 [dependencies]
+
+[build]
+c-sources = ["c/ipc.c"]
+c-flags = ["-O2"]
+c-include-dirs = ["c"]
+links = "ipc"
 
 # [lint]
 # disabled_rules = []

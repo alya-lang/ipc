@@ -7,6 +7,7 @@
 import "./types.alya"
 import "./core/frame.alya"
 import "./core/channel.alya"
+import "./core/pipe.alya"
 
 # ───────────────────────────────────────────────────────────────
 # Endpoint & Message Constructors
@@ -74,4 +75,45 @@ end
 ## `IpcStats` with all counters at 0.
 pub function new_stats() -> IpcStats
     return stats_new()
+end
+
+## Creates a named-pipe endpoint for the given channel name.
+##
+## ### Parameters
+## - `name`: Logical channel name (e.g. `"orders"`).
+##
+## ### Returns
+## Initialized `IpcEndpoint` with transport `Pipe`.
+##
+## ### Examples
+## ```alya
+## let ep = pipe("orders")
+## ```
+pub function pipe(name: string) -> IpcEndpoint
+    return endpoint_pipe(name)
+end
+
+## Sends a request to an endpoint and waits for a single reply.
+##
+## Routes by transport: pipe endpoints use the native pipe engine,
+## anything else uses the TCP loopback channel. Opens a fresh
+## connection per call (one frame each direction).
+##
+## ### Parameters
+## - `ep`: Target `IpcEndpoint`.
+## - `payload`: Request text payload.
+## - `timeout_ms`: Per-operation wait in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Reply payload string.
+##
+## ### Examples
+## ```alya
+## let reply = request(pipe("orders"), "ping")
+## ```
+pub function request(ep, payload, timeout_ms: int = 5000) -> string
+    if ep is not null and ep.transport == IpcTransport.Pipe
+        return ipc_pipe_request(ep.path, payload, timeout_ms)
+    end
+    return ipc_request(ep, payload, timeout_ms)
 end

@@ -12,12 +12,13 @@ Cross-platform inter-process communication: TCP loopback, named pipes, Unix sock
 ## 🌟 Features
 
 - ⚡ **TCP Loopback Channel**: Framing-aware client/server over `std/net` with one frame per direction and one-shot request/reply helpers
+- 🔌 **Native Pipe Transport**: Bundled zero-dependency C engine (`c/ipc.c`) — Windows named pipes and POSIX Unix domain sockets behind one slot API
 - 🧩 **Length-Prefixed Framing**: `<len>:<payload>` text frames and `<kind>:<id>:<len>:<payload>` message frames; payloads may contain colons and newlines
 - 🔒 **Public/Private Visibility (`pub`)**: Fine-grained export control with `pub` for endpoints, messages, framing, and channel functions
 - 🎯 **Endpoint & Message Models**: Idiomatic `enum` types (`IpcTransport`, `IpcKind`) and typed containers (`IpcEndpoint`, `IpcMessage`, `IpcError`, `IpcStats`)
 - 🛡️ **Defensive Result Pattern**: Structured `IpcError` throws for invalid ports, failed connections, and malformed frames
 - 🧪 **Enterprise Test & Benchmark Suite**: Loopback roundtrip coverage with standard assertions (`std/test`) plus framing micro-benchmarks
-- 🔌 **Reserved Transports**: `Pipe` and `UnixSocket` endpoint variants named early so config code can adopt them when backends land
+- 🔌 **Reserved Transports**: `UnixSocket` endpoint variant named early so config code can adopt it when the backend lands
 
 ---
 
@@ -29,13 +30,18 @@ ipc/
 ├── .editorconfig           # Uniform formatting rules across IDEs and editors
 ├── .gitignore              # Ecosystem standard ignore filters
 ├── .vscode/                # VS Code workspace settings, DAP launch configurations & tasks
-├── alya.toml               # Package manifest with dependencies and optional [build]
+├── alya.toml               # Package manifest with dependencies and native [build]
+├── c/                      # Bundled native pipe engine (Windows named pipes, POSIX Unix sockets)
+│   ├── ipc.c               # Slot-based pipe transport (listen/accept/connect/send/recv/poll/close)
+│   └── ipc.h               # Native API header
 ├── src/
 │   ├── lib.alya            # Public API facade (constructors and re-exports)
 │   ├── types.alya          # Data models, pub enums, pub structs, and struct methods
+│   ├── ffi.alya            # Native extern "C" declarations for the pipe engine
 │   └── core/               # Subdirectory module hierarchy
 │       ├── frame.alya      # Length-prefixed frame and message codec
-│       └── channel.alya    # TCP loopback listen/accept/connect/send/recv
+│       ├── channel.alya    # TCP loopback listen/accept/connect/send/recv
+│       └── pipe.alya       # Named pipe listen/accept/connect/send/recv
 ├── examples/
 │   └── demo.alya           # Runnable walkthrough of framing and loopback echo
 ├── tests/
@@ -90,6 +96,18 @@ function main()
     pkg::ipc_close(client)
     pkg::ipc_close(peer)
     pkg::ipc_close(server)
+
+    # 3. Same exchange over a named pipe (native engine)
+    let pipe_server = pkg::ipc_pipe_listen("demo")
+    let pipe_client = pkg::ipc_pipe_connect("demo")
+    let pipe_peer = pkg::ipc_pipe_accept(pipe_server, 2000)
+
+    pkg::ipc_pipe_send(pipe_client, "ping")
+    say f"Pipe: {pkg::ipc_pipe_recv(pipe_peer)}"
+
+    pkg::ipc_pipe_close(pipe_client)
+    pkg::ipc_pipe_close(pipe_peer)
+    pkg::ipc_pipe_close(pipe_server)
 end
 
 main()
@@ -102,13 +120,15 @@ main()
 | Symbol | Visibility | Description |
 |---|---|---|
 | `loopback(port)` | `pub function` | Creates a TCP loopback `IpcEndpoint` for the given port. |
+| `pipe(name)` | `pub function` | Creates a named-pipe `IpcEndpoint` for the given channel name. |
+| `request(ep, payload, timeout_ms)` | `pub function` | One-shot request routed by transport; returns reply payload. |
 | `text_message(payload)` | `pub function` | Creates a plain `Text` message (null payload becomes ""). |
 | `new_request(id, payload)` | `pub function` | Creates a `Request` message with the given correlation id. |
 | `new_response(id, payload)` | `pub function` | Creates a `Response` message answering the given correlation id. |
 | `new_stats()` | `pub function` | Creates a zeroed `IpcStats` record. |
 | `endpoint_loopback(port)` | `pub function` | Core constructor for loopback endpoints. |
-| `endpoint_pipe(path)` | `pub function` | Placeholder constructor for the future pipe transport. |
-| `endpoint_is_valid(ep)` | `pub function` | True for usable loopback endpoints (port 1-65535). |
+| `endpoint_pipe(name)` | `pub function` | Constructor for named-pipe endpoints. |
+| `endpoint_is_valid(ep)` | `pub function` | True for usable loopback (port 1-65535) or pipe (named) endpoints. |
 | `message_text(payload)` | `pub function` | Core constructor for text messages. |
 | `message_request(id, payload)` | `pub function` | Core constructor for request messages. |
 | `message_response(id, payload)` | `pub function` | Core constructor for response messages. |
@@ -126,6 +146,15 @@ main()
 | `ipc_recv(sock, max_bytes)` | `pub function` | Receives one framed payload; "" on close with no frame. |
 | `ipc_request(ep, payload, timeout_ms)` | `pub function` | One-shot request over a fresh connection; returns reply payload. |
 | `ipc_serve_once(server_sock, handler, timeout_ms)` | `pub function` | Serves one connection via handler; 1 served, 0 on timeout. |
+| `ipc_pipe_listen(name)` | `pub function` | Opens a named pipe listener; throws `IpcError` on bad names. |
+| `ipc_pipe_accept(server_slot, timeout_ms)` | `pub function` | Accepts next pipe connection; -1 on timeout. |
+| `ipc_pipe_connect(name, timeout_ms)` | `pub function` | Connects to a pipe listener; throws `IpcError` on failure. |
+| `ipc_pipe_close(slot)` | `pub function` | Closes a pipe slot (ignores invalid handles). |
+| `ipc_pipe_poll(slot, timeout_ms)` | `pub function` | 1 when readable, 0 on timeout, -1 on error. |
+| `ipc_pipe_send(slot, payload)` | `pub function` | Sends one framed payload; throws `IpcError` on failure. |
+| `ipc_pipe_recv(slot, max_bytes, timeout_ms)` | `pub function` | Receives one framed payload; "" on close with no frame. |
+| `ipc_pipe_request(name, payload, timeout_ms)` | `pub function` | One-shot pipe request over a fresh connection. |
+| `ipc_pipe_serve_once(server_slot, handler, timeout_ms)` | `pub function` | Serves one pipe connection via handler; 1 served, 0 on timeout. |
 | `IpcTransport` | `pub enum` | Transport variants (`Loopback = 0`, `Pipe = 1`, `UnixSocket = 2`). |
 | `IpcKind` | `pub enum` | Message kinds (`Text = 0`, `Request = 1`, `Response = 2`). |
 | `IpcEndpoint` | `pub struct` | Peer location (`transport`, `host`, `port`, `path`). |

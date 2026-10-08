@@ -25,7 +25,15 @@ function main()
 
     let pipe_ep = pkg::endpoint_pipe("my-pipe")
     runner_assert_eq(r, pipe_ep.transport, pkg::IpcTransport.Pipe, "pipe transport == Pipe")
-    runner_assert_eq(r, pipe_ep.is_valid(), false, "pipe endpoint not valid for loopback use")
+    runner_assert_eq(r, pipe_ep.is_valid(), true, "pipe endpoint with name is valid")
+    runner_assert_str_eq(r, pipe_ep.summary(), "pipe:my-pipe", "pipe summary is pipe:name")
+
+    let named_ep = pkg::pipe("orders")
+    runner_assert_eq(r, named_ep.transport, pkg::IpcTransport.Pipe, "pipe() facade builds Pipe endpoint")
+    runner_assert_str_eq(r, named_ep.path, "orders", "pipe() keeps channel name")
+
+    let empty_pipe = pkg::pipe("")
+    runner_assert_eq(r, empty_pipe.is_valid(), false, "empty pipe name is invalid")
 
     runner_assert_eq(r, pkg::IpcTransport.Loopback, 0, "IpcTransport.Loopback == 0")
     runner_assert_eq(r, pkg::IpcTransport.Pipe, 1, "IpcTransport.Pipe == 1")
@@ -166,6 +174,55 @@ function main()
             pkg::ipc_close(peer)
         end
         pkg::ipc_close(server)
+    end
+
+    # ═══════════════════════════════════════════════════════════
+    # 8. Named Pipe Roundtrip (single-threaded)
+    # ═══════════════════════════════════════════════════════════
+    let bad_name_seen = false
+    try
+        pkg::ipc_pipe_listen("!!!")
+    catch e
+        bad_name_seen = true
+    end
+    runner_assert_eq(r, bad_name_seen, true, "pipe listen rejects unusable names")
+
+    let pipe_server = pkg::ipc_pipe_listen("ipc-test-basic")
+    runner_assert(r, pipe_server >= 0, "pipe listener opened")
+
+    if pipe_server >= 0
+        let pipe_client = pkg::ipc_pipe_connect("ipc-test-basic")
+        runner_assert(r, pipe_client >= 0, "pipe client connected")
+
+        let pipe_peer = pkg::ipc_pipe_accept(pipe_server, 2000)
+        runner_assert(r, pipe_peer >= 0, "pipe server accepted")
+
+        if pipe_client >= 0 and pipe_peer >= 0
+            let pipe_sent = pkg::ipc_pipe_send(pipe_client, "hello-pipe:with:colons")
+            runner_assert(r, pipe_sent > 0, "pipe client sent bytes")
+
+            let pipe_got = pkg::ipc_pipe_recv(pipe_peer)
+            runner_assert_str_eq(r, pipe_got, "hello-pipe:with:colons", "pipe server received payload")
+
+            runner_assert_eq(r, pkg::ipc_pipe_poll(pipe_client, 100), 0, "no reply pending before server sends")
+
+            pkg::ipc_pipe_send(pipe_peer, "reply-ok")
+            runner_assert_eq(r, pkg::ipc_pipe_poll(pipe_client, 2000), 1, "reply readable via poll")
+
+            let pipe_back = pkg::ipc_pipe_recv(pipe_client)
+            runner_assert_str_eq(r, pipe_back, "reply-ok", "pipe client received reply")
+
+            pkg::ipc_pipe_close(pipe_client)
+            pkg::ipc_pipe_close(pipe_peer)
+        end
+        pkg::ipc_pipe_close(pipe_server)
+    end
+
+    # Rebinding the same name after close must succeed (stale cleanup).
+    let pipe_rebind = pkg::ipc_pipe_listen("ipc-test-basic")
+    runner_assert(r, pipe_rebind >= 0, "pipe name rebinds after close")
+    if pipe_rebind >= 0
+        pkg::ipc_pipe_close(pipe_rebind)
     end
 
     let failed = runner_summary(r)

@@ -1,0 +1,239 @@
+## ipc Named Pipe Channel
+##
+## Part of the Alya Language package ecosystem (https://github.com/alya-lang).
+## Framing-aware wrappers over the bundled native pipe engine (`c/ipc_pipe.c`):
+## Windows named pipes and POSIX Unix domain sockets behind one slot API.
+## Like the TCP channel, v0.1 uses one frame per connection direction.
+
+import "std/mem"
+import "../types.alya"
+import "../ffi.alya"
+import "./frame.alya"
+
+## Opens a named pipe listener for the given channel name.
+##
+## The name keeps `[A-Za-z0-9_-]` characters (up to 32); anything else is
+## stripped by the native engine. Throws `IpcError` when nothing usable remains.
+##
+## ### Parameters
+## - `name`: Logical channel name (e.g. `"orders"`).
+##
+## ### Returns
+## Listening slot handle (>= 0).
+pub function ipc_pipe_listen(name: string) -> int
+    if name is null or name == ""
+        throw IpcError { message: "ipc: invalid pipe name", code: 6 }
+    end
+    let slot = alya_ipc_pipe_listen(name)
+    if slot < 0
+        throw IpcError { message: alya_ipc_pipe_error(), code: 6 }
+    end
+    return slot
+end
+
+## Accepts the next pending pipe connection within the timeout.
+##
+## ### Parameters
+## - `server_slot`: Listening slot from `ipc_pipe_listen`.
+## - `timeout_ms`: Maximum wait in milliseconds (defaults to 2000).
+##
+## ### Returns
+## Connection slot handle, or -1 on timeout or error.
+pub function ipc_pipe_accept(server_slot: int, timeout_ms: int = 2000) -> int
+    if server_slot < 0
+        return -1
+    end
+    let t = timeout_ms
+    if t < 0
+        t = 0
+    end
+    return alya_ipc_pipe_accept(server_slot, t)
+end
+
+## Connects to a named pipe listener, throwing `IpcError` on failure.
+##
+## ### Parameters
+## - `name`: Logical channel name of the listener.
+## - `timeout_ms`: Maximum wait in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Connection slot handle (>= 0).
+pub function ipc_pipe_connect(name: string, timeout_ms: int = 5000) -> int
+    if name is null or name == ""
+        throw IpcError { message: "ipc: invalid pipe name", code: 6 }
+    end
+    let t = timeout_ms
+    if t <= 0
+        t = 5000
+    end
+    let slot = alya_ipc_pipe_connect(name, t)
+    if slot < 0
+        throw IpcError { message: alya_ipc_pipe_error(), code: 3 }
+    end
+    return slot
+end
+
+## Closes a pipe slot handle, ignoring invalid handles.
+##
+## ### Parameters
+## - `slot`: Slot handle to close.
+##
+## ### Returns
+## Always 0.
+pub function ipc_pipe_close(slot: int) -> int
+    if slot < 0
+        return 0
+    end
+    alya_ipc_pipe_close(slot)
+    return 0
+end
+
+## Polls a pipe slot for readability within the timeout.
+##
+## ### Parameters
+## - `slot`: Connection slot handle.
+## - `timeout_ms`: Maximum wait in milliseconds (defaults to 0).
+##
+## ### Returns
+## 1 when readable, 0 on timeout, -1 on error.
+pub function ipc_pipe_poll(slot: int, timeout_ms: int = 0) -> int
+    if slot < 0
+        return -1
+    end
+    let t = timeout_ms
+    if t < 0
+        t = 0
+    end
+    return alya_ipc_pipe_poll(slot, t)
+end
+
+## Sends one framed payload over a pipe connection.
+##
+## ### Parameters
+## - `slot`: Connection slot handle.
+## - `payload`: Text payload (null becomes "").
+##
+## ### Returns
+## Bytes sent.
+pub function ipc_pipe_send(slot: int, payload) -> int
+    if slot < 0
+        throw IpcError { message: "ipc: invalid pipe slot", code: 4 }
+    end
+    let body = payload
+    if body is null
+        body = ""
+    end
+    let wire = frame_encode(body)
+    let n = alya_ipc_pipe_send(slot, wire)
+    if n < 0
+        throw IpcError { message: alya_ipc_pipe_error(), code: 5 }
+    end
+    return n
+end
+
+## Receives one framed payload from a pipe connection.
+##
+## Reads until the first complete frame arrives. Returns "" when the
+## peer closes the connection without sending a frame.
+##
+## ### Parameters
+## - `slot`: Connection slot handle.
+## - `max_bytes`: Maximum bytes per read (defaults to 4096).
+## - `timeout_ms`: Per-read wait in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Decoded payload string, or "" on close with no frame.
+pub function ipc_pipe_recv(slot: int, max_bytes: int = 4096, timeout_ms: int = 5000) -> string
+    if slot < 0
+        throw IpcError { message: "ipc: invalid pipe slot", code: 4 }
+    end
+    let limit = max_bytes
+    if limit <= 0
+        limit = 4096
+    end
+    let t = timeout_ms
+    if t <= 0
+        t = 5000
+    end
+    let buf = alloc_mem(limit + 1)
+    let out = ""
+    let guard = 0
+    while guard < 64
+        let n = alya_ipc_pipe_recv(slot, buf, limit, t)
+        if n > 0
+            write_byte(buf, n, 0)
+            out += string_clone(to_string(buf))
+            let payload, rest = frame_decode(out)
+            if payload is not null
+                free_mem(buf)
+                return payload
+            end
+        elif n == 0
+            break
+        elif n == -2
+            guard += 1
+        else
+            break
+        end
+    end
+    free_mem(buf)
+    let tail, ignored = frame_decode(out)
+    if tail is not null
+        return tail
+    end
+    return ""
+end
+
+## Sends a pipe request and waits for a single reply.
+##
+## Opens a fresh connection per call (one frame each direction).
+##
+## ### Parameters
+## - `name`: Logical channel name of the listener.
+## - `payload`: Request text payload.
+## - `timeout_ms`: Per-operation wait in milliseconds (defaults to 5000).
+##
+## ### Returns
+## Reply payload string.
+pub function ipc_pipe_request(name: string, payload, timeout_ms: int = 5000) -> string
+    let slot = ipc_pipe_connect(name, timeout_ms)
+    let reply = ""
+    try
+        ipc_pipe_send(slot, payload)
+        reply = ipc_pipe_recv(slot)
+        ipc_pipe_close(slot)
+        return reply
+    catch e
+        ipc_pipe_close(slot)
+        throw e
+    end
+end
+
+## Accepts one pipe connection, runs the handler, and replies once.
+##
+## ### Parameters
+## - `server_slot`: Listening slot from `ipc_pipe_listen`.
+## - `handler`: Function receiving the request payload and returning reply text.
+## - `timeout_ms`: Accept timeout in milliseconds (defaults to 5000).
+##
+## ### Returns
+## 1 when a request was served, 0 when no connection arrived.
+pub function ipc_pipe_serve_once(server_slot: int, handler, timeout_ms: int = 5000) -> int
+    let peer = ipc_pipe_accept(server_slot, timeout_ms)
+    if peer < 0
+        return 0
+    end
+    try
+        let msg = ipc_pipe_recv(peer)
+        let out = handler(msg)
+        if out is null
+            out = ""
+        end
+        ipc_pipe_send(peer, out)
+        ipc_pipe_close(peer)
+        return 1
+    catch e
+        ipc_pipe_close(peer)
+        throw e
+    end
+end
