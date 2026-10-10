@@ -296,9 +296,9 @@ end
 ## Formatted `"host:port"` summary, or `"pipe:name"` for pipe endpoints.
 pub function IpcEndpoint.summary(self: IpcEndpoint) -> string
     if self.transport == IpcTransport.Pipe
-        return "pipe:{self.path}"
+        return f"pipe:{self.path}"
     end
-    return "{self.host}:{self.port}"
+    return f"{self.host}:{self.port}"
 end
 
 ## Returns true when this endpoint carries a usable address.
@@ -323,7 +323,7 @@ end
 ## Requires the `framing` feature (default-on).
 @cfg(feature = "framing")
 pub function IpcMessage.summary(self: IpcMessage) -> string
-    return "{self.kind}#{self.id} ({len(self.payload)} chars)"
+    return f"{self.kind}#{self.id} ({len(self.payload)} chars)"
 end
 
 ## Returns true when this message holds a known kind and payload.
