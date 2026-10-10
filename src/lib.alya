@@ -5,8 +5,11 @@
 ## loopback with length-prefixed framing and one-shot request/reply.
 
 import "./types.alya"
+@cfg(feature = "framing")
 import "./core/frame.alya"
+@cfg(feature = "tcp")
 import "./core/channel.alya"
+@cfg(feature = "pipe")
 import "./core/pipe.alya"
 
 # ───────────────────────────────────────────────────────────────
@@ -25,6 +28,9 @@ import "./core/pipe.alya"
 ## ```alya
 ## let ep = loopback(19881)
 ## ```
+##
+## Requires the `tcp` feature (default-on).
+@cfg(feature = "tcp")
 pub function loopback(port: int) -> IpcEndpoint
     return endpoint_loopback(port)
 end
@@ -41,6 +47,9 @@ end
 ## ```alya
 ## let msg = text_message("hello")
 ## ```
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function text_message(payload) -> IpcMessage
     return message_text(payload)
 end
@@ -53,6 +62,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcMessage` with kind `Request`.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function new_request(id: int, payload) -> IpcMessage
     return message_request(id, payload)
 end
@@ -65,6 +77,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcMessage` with kind `Response`.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function new_response(id: int, payload) -> IpcMessage
     return message_response(id, payload)
 end
@@ -89,6 +104,9 @@ end
 ## ```alya
 ## let ep = pipe("orders")
 ## ```
+##
+## Requires the `pipe` feature (default-on).
+@cfg(feature = "pipe")
 pub function pipe(name: string) -> IpcEndpoint
     return endpoint_pipe(name)
 end
@@ -111,7 +129,12 @@ end
 ## ```alya
 ## let reply = request(pipe("orders"), "ping")
 ## ```
+##
+## Requires the `tcp` feature (default-on); pipe endpoints route through
+## the native engine only when the `pipe` feature is also active.
+@cfg(feature = "tcp")
 pub function request(ep, payload, timeout_ms: int = 5000) -> string
+    @cfg(feature = "pipe")
     if ep is not null and ep.transport == IpcTransport.Pipe
         return ipc_pipe_request(ep.path, payload, timeout_ms)
     end

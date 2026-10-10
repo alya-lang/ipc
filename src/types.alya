@@ -50,6 +50,9 @@ end
 ## - `kind`: Logical `IpcKind` value.
 ## - `id`: Correlation id matching requests to responses.
 ## - `payload`: Text payload (UTF-8 without NUL bytes in v0.1).
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub struct IpcMessage
     kind: int,
     id: int,
@@ -89,6 +92,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcEndpoint` with transport `Loopback`.
+##
+## Requires the `tcp` feature (default-on).
+@cfg(feature = "tcp")
 pub function endpoint_loopback(port: int) -> IpcEndpoint
     return IpcEndpoint { transport: IpcTransport.Loopback, host: "127.0.0.1", port: port, path: "" }
 end
@@ -104,6 +110,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcEndpoint` with transport `Pipe`.
+##
+## Requires the `pipe` feature (default-on).
+@cfg(feature = "pipe")
 pub function endpoint_pipe(name: string) -> IpcEndpoint
     let n = name
     if n is null
@@ -155,6 +164,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcMessage`.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function message_text(payload) -> IpcMessage
     let body = payload
     if body is null
@@ -171,6 +183,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcMessage` with kind `Request`.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function message_request(id: int, payload) -> IpcMessage
     let body = payload
     if body is null
@@ -187,6 +202,9 @@ end
 ##
 ## ### Returns
 ## Initialized `IpcMessage` with kind `Response`.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function message_response(id: int, payload) -> IpcMessage
     let body = payload
     if body is null
@@ -202,6 +220,9 @@ end
 ##
 ## ### Returns
 ## True when valid, else false.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function message_is_valid(msg) -> bool
     if msg is null
         return false
@@ -298,6 +319,9 @@ end
 ##
 ## ### Returns
 ## Formatted `"kind#id (n chars)"` summary.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function IpcMessage.summary(self: IpcMessage) -> string
     return "{self.kind}#{self.id} ({len(self.payload)} chars)"
 end
@@ -309,6 +333,9 @@ end
 ##
 ## ### Returns
 ## True when valid, else false.
+##
+## Requires the `framing` feature (default-on).
+@cfg(feature = "framing")
 pub function IpcMessage.is_valid(self: IpcMessage) -> bool
     return message_is_valid(self)
 end

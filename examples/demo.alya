@@ -3,22 +3,25 @@
 
 import "../src/lib.alya" as pkg
 
-function main()
-    say "=== ipc Package Showcase ==="
-    say ""
-
+@cfg(feature = "framing")
+function demo_messages()
     # ───────────────────────────────────────────────────────────
-    # 1. Endpoints & Messages
+    # 1. Messages
     # ───────────────────────────────────────────────────────────
-    say "--- 1. Endpoints & Messages ---"
-    let ep = pkg::loopback(19881)
-    say "Endpoint: " + ep.summary()
-
+    say "--- 1. Messages ---"
     let req = pkg::new_request(7, "compute:6*7")
     say "Request:  " + req.summary()
     say "Payload:  " + req.payload
     say ""
 
+end
+
+@cfg(not(feature = "framing"))
+function demo_messages()
+end
+
+@cfg(feature = "framing")
+function demo_framing()
     # ───────────────────────────────────────────────────────────
     # 2. Wire Framing (pure, no network)
     # ───────────────────────────────────────────────────────────
@@ -28,16 +31,27 @@ function main()
     let back, rest = pkg::frame_decode(wire)
     say "Decoded:  " + back + " (rest: \"" + rest + "\")"
 
+    let req = pkg::new_request(7, "compute:6*7")
     let mwire = pkg::frame_encode_message(req)
     say "Msg wire: " + mwire
     let mback, mrest = pkg::frame_decode_message(mwire)
     say "Msg back: kind=" + str(mback.kind) + " id=" + str(mback.id) + " payload=" + mback.payload
     say ""
 
+end
+
+@cfg(not(feature = "framing"))
+function demo_framing()
+end
+
+@cfg(feature = "tcp")
+function demo_tcp()
     # ───────────────────────────────────────────────────────────
     # 3. Loopback Request/Reply (single-threaded echo)
     # ───────────────────────────────────────────────────────────
     say "--- 3. Loopback Request/Reply ---"
+    let ep = pkg::loopback(19881)
+    say "Endpoint: " + ep.summary()
     let ports = [19881, 19882, 19883, 19884, 19885]
     let server = -1
     let bound = 0
@@ -69,10 +83,20 @@ function main()
     end
     say ""
 
+end
+
+@cfg(not(feature = "tcp"))
+function demo_tcp()
+end
+
+@cfg(feature = "pipe")
+function demo_pipe()
     # ───────────────────────────────────────────────────────────
     # 4. Named Pipe Request/Reply (single-threaded echo)
     # ───────────────────────────────────────────────────────────
     say "--- 4. Named Pipe Request/Reply ---"
+    let ep = pkg::pipe("ipc-demo")
+    say "Endpoint: " + ep.summary()
     let pipe_server = pkg::ipc_pipe_listen("ipc-demo")
     if pipe_server < 0
         say "Pipe listener unavailable, skipping pipe demo."
@@ -91,6 +115,21 @@ function main()
         pkg::ipc_pipe_close(pipe_server)
     end
     say ""
+
+end
+
+@cfg(not(feature = "pipe"))
+function demo_pipe()
+end
+
+function main()
+    say "=== ipc Package Showcase ==="
+    say ""
+
+    demo_messages()
+    demo_framing()
+    demo_tcp()
+    demo_pipe()
 
     # ───────────────────────────────────────────────────────────
     # 5. Statistics

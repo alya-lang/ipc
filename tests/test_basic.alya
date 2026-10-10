@@ -4,41 +4,8 @@
 import "std/test"
 import "../src/lib.alya" as pkg
 
-function main()
-    test_suite("ipc Test Suite")
-    let r = runner_new()
-
-    # ═══════════════════════════════════════════════════════════
-    # 1. Endpoint Constructors & Validation
-    # ═══════════════════════════════════════════════════════════
-    let ep = pkg::loopback(19881)
-    runner_assert_eq(r, ep.transport, pkg::IpcTransport.Loopback, "loopback transport == Loopback")
-    runner_assert_str_eq(r, ep.host, "127.0.0.1", "loopback host is 127.0.0.1")
-    runner_assert_eq(r, ep.port, 19881, "loopback port preserved")
-    runner_assert_eq(r, ep.is_valid(), true, "loopback endpoint is valid")
-    runner_assert_eq(r, pkg::endpoint_is_valid(ep), true, "endpoint_is_valid true for loopback")
-    runner_assert_str_eq(r, ep.summary(), "127.0.0.1:19881", "endpoint summary host:port")
-
-    let bad_port = pkg::loopback(0)
-    runner_assert_eq(r, bad_port.is_valid(), false, "port 0 endpoint invalid")
-    runner_assert_eq(r, pkg::endpoint_is_valid(null), false, "null endpoint invalid")
-
-    let pipe_ep = pkg::endpoint_pipe("my-pipe")
-    runner_assert_eq(r, pipe_ep.transport, pkg::IpcTransport.Pipe, "pipe transport == Pipe")
-    runner_assert_eq(r, pipe_ep.is_valid(), true, "pipe endpoint with name is valid")
-    runner_assert_str_eq(r, pipe_ep.summary(), "pipe:my-pipe", "pipe summary is pipe:name")
-
-    let named_ep = pkg::pipe("orders")
-    runner_assert_eq(r, named_ep.transport, pkg::IpcTransport.Pipe, "pipe() facade builds Pipe endpoint")
-    runner_assert_str_eq(r, named_ep.path, "orders", "pipe() keeps channel name")
-
-    let empty_pipe = pkg::pipe("")
-    runner_assert_eq(r, empty_pipe.is_valid(), false, "empty pipe name is invalid")
-
-    runner_assert_eq(r, pkg::IpcTransport.Loopback, 0, "IpcTransport.Loopback == 0")
-    runner_assert_eq(r, pkg::IpcTransport.Pipe, 1, "IpcTransport.Pipe == 1")
-    runner_assert_eq(r, pkg::IpcTransport.UnixSocket, 2, "IpcTransport.UnixSocket == 2")
-
+@cfg(feature = "framing")
+function test_framing(r)
     # ═══════════════════════════════════════════════════════════
     # 2. Message Constructors & Validation
     # ═══════════════════════════════════════════════════════════
@@ -61,9 +28,6 @@ function main()
     runner_assert_eq(r, res.id, 7, "response id preserved")
 
     runner_assert_eq(r, pkg::message_is_valid(null), false, "null message invalid")
-    runner_assert_eq(r, pkg::IpcKind.Text, 0, "IpcKind.Text == 0")
-    runner_assert_eq(r, pkg::IpcKind.Request, 1, "IpcKind.Request == 1")
-    runner_assert_eq(r, pkg::IpcKind.Response, 2, "IpcKind.Response == 2")
 
     # ═══════════════════════════════════════════════════════════
     # 3. Frame Codec Roundtrips
@@ -121,20 +85,28 @@ function main()
     runner_assert_eq(r, mback.id, 7, "message id survives codec")
     runner_assert_str_eq(r, mback.payload, "compute", "message payload survives codec")
     runner_assert_str_eq(r, mrest, "", "message remainder empty")
+end
 
+@cfg(not(feature = "framing"))
+function test_framing(r)
+end
+
+@cfg(feature = "tcp")
+function test_tcp(r)
     # ═══════════════════════════════════════════════════════════
-    # 6. Statistics Counters
+    # 1a. TCP Loopback Endpoints
     # ═══════════════════════════════════════════════════════════
-    let st = pkg::new_stats()
-    runner_assert_eq(r, st.total(), 0, "fresh stats total == 0")
-    st.record_sent()
-    st.record_sent()
-    st.record_received()
-    st.record_error()
-    runner_assert_eq(r, st.sent, 2, "sent counter == 2")
-    runner_assert_eq(r, st.received, 1, "received counter == 1")
-    runner_assert_eq(r, st.errors, 1, "error counter == 1")
-    runner_assert_eq(r, st.total(), 3, "total == sent + received")
+    let ep = pkg::loopback(19881)
+    runner_assert_eq(r, ep.transport, pkg::IpcTransport.Loopback, "loopback transport == Loopback")
+    runner_assert_str_eq(r, ep.host, "127.0.0.1", "loopback host is 127.0.0.1")
+    runner_assert_eq(r, ep.port, 19881, "loopback port preserved")
+    runner_assert_eq(r, ep.is_valid(), true, "loopback endpoint is valid")
+    runner_assert_eq(r, pkg::endpoint_is_valid(ep), true, "endpoint_is_valid true for loopback")
+    runner_assert_str_eq(r, ep.summary(), "127.0.0.1:19881", "endpoint summary host:port")
+
+    let bad_port = pkg::loopback(0)
+    runner_assert_eq(r, bad_port.is_valid(), false, "port 0 endpoint invalid")
+    runner_assert_eq(r, pkg::endpoint_is_valid(null), false, "null endpoint invalid")
 
     # ═══════════════════════════════════════════════════════════
     # 7. TCP Loopback Roundtrip (single-threaded)
@@ -175,6 +147,28 @@ function main()
         end
         pkg::ipc_close(server)
     end
+end
+
+@cfg(not(feature = "tcp"))
+function test_tcp(r)
+end
+
+@cfg(feature = "pipe")
+function test_pipe(r)
+    # ═══════════════════════════════════════════════════════════
+    # 1b. Named Pipe Endpoints
+    # ═══════════════════════════════════════════════════════════
+    let pipe_ep = pkg::endpoint_pipe("my-pipe")
+    runner_assert_eq(r, pipe_ep.transport, pkg::IpcTransport.Pipe, "pipe transport == Pipe")
+    runner_assert_eq(r, pipe_ep.is_valid(), true, "pipe endpoint with name is valid")
+    runner_assert_str_eq(r, pipe_ep.summary(), "pipe:my-pipe", "pipe summary is pipe:name")
+
+    let named_ep = pkg::pipe("orders")
+    runner_assert_eq(r, named_ep.transport, pkg::IpcTransport.Pipe, "pipe() facade builds Pipe endpoint")
+    runner_assert_str_eq(r, named_ep.path, "orders", "pipe() keeps channel name")
+
+    let empty_pipe = pkg::pipe("")
+    runner_assert_eq(r, empty_pipe.is_valid(), false, "empty pipe name is invalid")
 
     # ═══════════════════════════════════════════════════════════
     # 8. Named Pipe Roundtrip (single-threaded)
@@ -224,6 +218,38 @@ function main()
     if pipe_rebind >= 0
         pkg::ipc_pipe_close(pipe_rebind)
     end
+end
+
+@cfg(not(feature = "pipe"))
+function test_pipe(r)
+end
+
+function main()
+    test_suite("ipc Test Suite")
+    let r = runner_new()
+
+    # Feature-independent vocabulary (enums) and core statistics.
+    runner_assert_eq(r, pkg::IpcTransport.Loopback, 0, "IpcTransport.Loopback == 0")
+    runner_assert_eq(r, pkg::IpcTransport.Pipe, 1, "IpcTransport.Pipe == 1")
+    runner_assert_eq(r, pkg::IpcTransport.UnixSocket, 2, "IpcTransport.UnixSocket == 2")
+    runner_assert_eq(r, pkg::IpcKind.Text, 0, "IpcKind.Text == 0")
+    runner_assert_eq(r, pkg::IpcKind.Request, 1, "IpcKind.Request == 1")
+    runner_assert_eq(r, pkg::IpcKind.Response, 2, "IpcKind.Response == 2")
+
+    let st = pkg::new_stats()
+    runner_assert_eq(r, st.total(), 0, "fresh stats total == 0")
+    st.record_sent()
+    st.record_sent()
+    st.record_received()
+    st.record_error()
+    runner_assert_eq(r, st.sent, 2, "sent counter == 2")
+    runner_assert_eq(r, st.received, 1, "received counter == 1")
+    runner_assert_eq(r, st.errors, 1, "error counter == 1")
+    runner_assert_eq(r, st.total(), 3, "total == sent + received")
+
+    test_framing(r)
+    test_tcp(r)
+    test_pipe(r)
 
     let failed = runner_summary(r)
     if failed > 0

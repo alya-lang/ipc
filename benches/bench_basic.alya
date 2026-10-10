@@ -4,9 +4,8 @@
 import "std/test"
 import "../src/lib.alya" as pkg
 
-function main()
-    let runner = bench_runner("ipc Micro-Benchmarks")
-
+@cfg(feature = "framing")
+function bench_framing(runner)
     # Bench 1: frame_encode short payload - 100k iterations
     bench_start(runner, 100000)
     let i = 0
@@ -36,17 +35,36 @@ function main()
     end
     bench_stop(runner, "message codec 50k")
 
-    # Bench 4: endpoint + message constructors - 100k iterations
+end
+
+@cfg(not(feature = "framing"))
+function bench_framing(runner)
+end
+
+@cfg(feature = "tcp")
+function bench_tcp(runner)
+    # Bench 4: endpoint constructors + validation - 100k iterations
     bench_start(runner, 100000)
     let m = 0
     while m < 100000
         let ep = pkg::loopback(19881)
-        let msg = pkg::text_message("ping")
         ep.is_valid()
-        msg.is_valid()
+        pkg::endpoint_is_valid(ep)
         m += 1
     end
     bench_stop(runner, "constructors 100k")
+
+end
+
+@cfg(not(feature = "tcp"))
+function bench_tcp(runner)
+end
+
+function main()
+    let runner = bench_runner("ipc Micro-Benchmarks")
+
+    bench_framing(runner)
+    bench_tcp(runner)
 
     bench_summary(runner)
 end

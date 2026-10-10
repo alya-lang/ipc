@@ -6,6 +6,10 @@
 ## `<kind>:<id>:<byte-length>:<payload>`. Payloads may contain colons and
 ## newlines; only the length prefix is parsed structurally.
 
+# Explicit std/str import: frame_decode uses index_of, which lives in
+# std/str and is otherwise only pulled in transitively via std/net.
+# Without this, framing-only builds link-fail on fn_index_of.
+import "std/str"
 import "../types.alya"
 
 ## Encodes a text payload into a single wire frame.

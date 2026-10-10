@@ -30,7 +30,7 @@ ipc/
 ├── .editorconfig           # Uniform formatting rules across IDEs and editors
 ├── .gitignore              # Ecosystem standard ignore filters
 ├── .vscode/                # VS Code workspace settings, DAP launch configurations & tasks
-├── alya.toml               # Package manifest with dependencies and native [build]
+├── alya.toml               # Package manifest with dependencies, [features] and native [build]
 ├── c/                      # Bundled native pipe engine (Windows named pipes, POSIX Unix sockets)
 │   ├── ipc.c               # Slot-based pipe transport (listen/accept/connect/send/recv/poll/close)
 │   └── ipc.h               # Native API header
@@ -69,6 +69,31 @@ Or install it directly using the Alya package CLI:
 ```bash
 alya add ipc --git https://github.com/alya-lang/ipc --branch main
 alya install
+```
+
+### Package Features
+
+| Feature | Default | Description |
+|:---|:---:|:---|
+| `tcp` | ✅ | TCP loopback channel (`loopback`, `ipc_listen/connect/accept/send/recv/request/serve_once`, `request`). |
+| `pipe` | ✅ | Named-pipe transport (`pipe`, `ipc_pipe_listen/connect/accept/send/recv/request/serve_once/poll`). |
+| `framing` | ✅ | Length-prefixed wire framing and message constructors (`frame_encode/decode`, `frame_encode/decode_message`, `text_message`, `new_request`, `new_response`). |
+
+Core endpoint/error/statistics vocabulary (`IpcEndpoint`, `IpcError`, `IpcStats`, `new_stats`, `endpoint_is_valid`) always stays available. The `request` facade requires `tcp`; pipe endpoints route through the native engine only when `pipe` is also active.
+
+```bash
+# Full build (default)
+alya install
+alya test
+
+# Slim build (core vocabulary only; helpers become no-ops)
+alya install --no-default-features
+alya test --no-default-features
+
+# Single-slice builds
+alya test --no-default-features --features framing
+alya test --no-default-features --features tcp
+alya test --no-default-features --features pipe
 ```
 
 ---
